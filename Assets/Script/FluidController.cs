@@ -2,29 +2,28 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+
 public class FluidController : MonoBehaviour
 {
-
     #region Particle
 
-        // Fluid 를 이루는 Particle 하나의 정보
+        //Fluid 를 이루는 Particle 각각이 가지는 데이터
         private struct Particle
         {
             // 위치
             public Vector3 position;
             // 속도
             public Vector3 velocity;
-            // particle 에 가해지는 힘 => 3가지 요소로 구성되어 있다
+            //particle 에 가해지는 힘 => 최소 3가지 요소로 구성되어 있다
+            //압력 + 점성 + 표면장력
             public Vector3 force;
             
             // 밀도
             public float density;
             // 압력
             public float pressure;
-
-
-            
-            //  particle surface normal
+                    
+            //particle surface normal, 표면장력
             public Vector3 surfNormal;
 
 
@@ -35,25 +34,22 @@ public class FluidController : MonoBehaviour
                 force = Vector3.zero;
                 density = 0.0f;
                 pressure = 0.0f;
-
-
                 surfNormal = Vector3.zero;
             }
+
         }
+        
+        //Particle Struct 의 크기
         int Particle_Size = 14 * sizeof(float);
 
-
-
-        // 사용하려는 전체 particle 의 개수 => 일력하는 particles 수에 의해 결정된다
+        //사용하려는 전체 particle 의 개수 => 일력하는 particles 수에 의해 결정된다
         private int particleCount;
 
     #endregion
 
-
-
     #region 계산에 필요한 값들, 설정 값들
 
-        // Particle 에 대한 정보
+        //Particle 에 대한 정보
         [Header("Particle")]
 
             [Range(0.01f, 0.5f)]
@@ -61,7 +57,6 @@ public class FluidController : MonoBehaviour
             
             [Range(0.1f, 3.0f)]
             public float particleRadius;       // particle 하나의 반지름
-
 
             // particle 을 배치할 때, 한 줄에 몇개나 놓을 지, 생성하고자 하는 particle 갯수 지정
             [Min(2)]
@@ -71,55 +66,55 @@ public class FluidController : MonoBehaviour
             [Min(2)]
             public int zNum;
 
-
-            // particle 들을 초기화할 때, 랜덤 값으로 주는 seed
+            //Particle 들을 초기화할 때, 약간 섞어서 배치한다
+            //이때 섞기 위해 랜덤 값으로 주는 seed
             [Range(0.1f, 0.5f)]
             public float seed;
-        
+       
 
-
-        // Smooth Kerenl 에 대한 정보
+        //Smooth Kerenl 에 대한 정보
         [Header("Kenrel")]
 
+            /*
+            Smooth Kernel 에서 사용하는 상수, core radius h
+            SPH 방법에 의해서, 값을 보간할 때 계산에 포함시키는 거리를 의미한다
+            떨어져 있는 거리가 h 이상이면, 영향을 주지 않는다, Smooth Kernel 값이 0 이다
+            */
             [Range(0.1f, 3.0f)]
             public float smoothingRadius;
 
-
         
-        // 압력 계산
+        //압력에 의한 힘 계산
         [Header("Pressure")]
 
             [Range(0.0f, 500.0f)]
-            public float gasCoeffi;
+            public float gasCoeffi;     //k, gas constant, 온도에 영향을 받는다, 온도가 높아지면 압력이 커진다
 
             [Range(0.0f, 1.0f)]
-            public float restDensity;
-
+            public float restDensity;   //p_0, Make the simulation numerically more stable
 
         
-        // 점성에 의한 힘 계산
+        //점성에 의한 힘 계산
         [Header("Viscosity")]
 
             [Range(0.0f, 1.0f)]
-            // 액체의 점성도
-            public float viscosity;
+            public float viscosity;     // 액체의 점성도
 
 
-
-        // 외력에 의한 힘 계산
+        //외력에 의한 힘 계산
         [Header("Gravity")]
-            public Vector3 gravityAcel = new Vector3(0, -9.8f, 0);
 
+            public Vector3 gravityAcel = new Vector3(0, -9.8f, 0); //기본 중력 가속도
 
 
         // 이동 계산
         [Header("DeltaTime")]
-            // 이동 계산에 사용할, 미소 시간, 델타 타임을 직접 지정한다
+
+            //이동 계산에 사용할, 미소 시간, 델타 타임을 직접 지정한다
             public float deltaTime;
 
-            // 흐른 시간을 총 저장하는 변수
+            //흐른 시간을 총 저장하는 변수
             private float totalTime = 0;
-
 
 
         // 범위 계산
@@ -128,35 +123,34 @@ public class FluidController : MonoBehaviour
             // 공이 움직일 수 있는 범위
             public Vector3 limitRange;
             
-            // 경계와 충돌 후 속도가 줄어드는 정도
+            //경계와 충돌 후 속도가 줄어드는 정도, 마찰력
             [Range(0.01f, 0.7f)]
             public float damping;
-
 
 
         [Header("Wave")]
 
             [Range(0.0f, 40.0f)]
-            public float extraForce;
+            public float extraForce; //파도를 만드는 외부 힘
 
-
-
+        
+        //표면 장력에 의한 힘
         [Header("Surface")]
 
-            [Range(0.0f, 50.0f)]
             // 표면 장력의 정도를 결정하는 계수
+            [Range(0.0f, 50.0f)]
             public float surfCoeffi;
 
-            // 표면 장력을 계산할지 말지 결정하는 임계값
+            //표면 장력을 계산할지 말지 결정하는 임계값
             [Range(0.0f, 1.0f)]
             public float surfForceThreshold;
 
-            // 표면으로 취급할 지 말지를 결정하는 임계값
+            //임의의 Particle 을 표면으로 취급할 지 말지를 결정하는 임계값
             [Range(0.0f, 1.0f)]
             public float surfTrackThreshold;
 
-
         
+        //카메라 조작에 필요한 성분들
         [Header("MouseInput")]
 
             // 카메라 컴포넌트
@@ -178,58 +172,48 @@ public class FluidController : MonoBehaviour
 
     #endregion
 
-
-
     #region Buffer, Array 관련
 
-        // particle 을 담는 배열
+        //particle 의 정보를 담는 배열
         Particle[] particleArray;
         
-        
-        // 커널 실행에 필요한 그룹 수
+        //커널 실행에 필요한 그룹 수
         int groupSize;
 
-
-        // 배열 할당하는 사이즈
+        //배열의 크기
         int arraySize;
 
-
-        // particle 정보를 넘겨주는 compute buffer
+        //particle 정보를 GPU 로 넘겨주는 compute buffer
         ComputeBuffer particleBuffer;
 
     #endregion
 
-
-
     #region shader, material, kernel
 
         public ComputeShader shader;
-        public Material material;
+        public Material material;       //fluid material
 
+        int kernelComputeDensityPressure;   //힘을 계산하기 전, 각 Particles 의 밀도와 압력 값을 계산
 
-        int kernelComputeDensityPressure;
-        int kernelComputeForces;
-        int kernelMakeMove;
-        int kernelCheckLimit;
+        int kernelComputeForces;            //유체를 움직이는 힘 3가지를 계산
+        int kernelComputeSurfaceForce;      //표면장력을 계산한다
+        int kernelComputeInputForce;        //외부의 힘을 계산한다, 마우스 클릭을 통해서 힘을 가할 수 있다
+
+        int kernelMakeMove;                 //계산된 힘에 맞춰서 이동
+        int kernelCheckLimit;               //정해진 범위를 벗어나지 않게 한다
+
 
 
         // 클릭 시 힘을 주는 커널 <- 삭제 예정
         int kernelGiveForce;
-
-        // surface 관련 동작을 하는 커널
-        int kernelComputeSurfaceForce;
-
-        
-        // 힘을 주는 커널 핸들
-        int kernelComputeInputForce;
 
     #endregion
 
 
 
     #region Indirect Draw 관련
-        
-        uint[] argsArray = { 0, 0, 0, 0, 0 };
+
+    uint[] argsArray = { 0, 0, 0, 0, 0 };
         ComputeBuffer argsBuffer;
         Bounds bounds = new Bounds(Vector3.zero, Vector3.one * 0);
 
@@ -333,6 +317,8 @@ public class FluidController : MonoBehaviour
                 shader.SetVector("yRange", yRange);
                 shader.SetVector("inputForce", inputForce);
 
+                
+                //마우스를 통해서 들어온 외부 힘을 계산
                 shader.Dispatch(kernelComputeInputForce, groupSize, 1, 1);
             }
 
