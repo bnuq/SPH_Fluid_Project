@@ -93,7 +93,8 @@ shared RWStructuredBuffer<Particle> particles;
 
 //----------------------------------------------------------------
 // mouse click 을 통해 입력받는 값
-float2 yRange;
+//float2 yRange;
+    float yDiff;
 float2 inputForce;
 
 
@@ -633,22 +634,22 @@ void CheckLimit (uint3 id : SV_DispatchThreadID)
 
 
 
-
-
-[numthreads(ThreadCount, 1, 1)]
-void GiveForce (uint3 id : SV_DispatchThreadID)
-{
-
-    Particle particle = particles[id.x];
-
-    if(particle.position.x <= 0)
-    {
-        particle.force += float3(500, 500, 0);
-
-        particles[id.x] = particle;
-    }
-    else return;
-}
+//
+//
+//[numthreads(ThreadCount, 1, 1)]
+//void GiveForce (uint3 id : SV_DispatchThreadID)
+//{
+//
+//    Particle particle = particles[id.x];
+//
+//    if(particle.position.x <= 0)
+//    {
+//        particle.force += float3(500, 500, 0);
+//
+//        particles[id.x] = particle;
+//    }
+//    else return;
+//}
 
 
 
