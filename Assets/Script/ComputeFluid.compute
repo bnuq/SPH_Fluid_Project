@@ -1,26 +1,19 @@
 // compute shader 에서 작업하려는 kernel 들
-#pragma kernel ComputeDensityPressure
-#pragma kernel ComputeForces
-#pragma kernel MakeMove
-#pragma kernel CheckLimit
+#pragma kernel ComputeDensityPressure   //각 Particle 이 가지고 있는 밀도, 압력 값을 계산
 
-// x 좌표가 -limitRange.x 보다 작은 particles 에 힘을주는 커널
-#pragma kernel GiveForce
+#pragma kernel ComputeForces            //압력에 의한 힘 + 점성에 의한 힘 + Wave 에 의한 힘 계산 + 중력
+#pragma kernel ComputeSurfaceForce      //color field 값과 surface 를 계산하는 커널을 새로 하나 만들자
+#pragma kernel ComputeInputForce        //클릭에 따른 힘을 전달하는 커널
 
-
-// color field 값과 surface 를 계산하는 커널을 새로 하나 만들자
-#pragma kernel ComputeSurfaceForce
-
-
-// 클릭에 따른 힘을 전달하는 커널
-#pragma kernel ComputeInputForce
+#pragma kernel MakeMove                 //계산된 힘에 맞춰서 이동
+#pragma kernel CheckLimit               //주어진 범위를 벗어났는지 확인
 
 
 //----------------------------------------------------------------
 
 
-// compute buffer 로 넘겨받는 정보와 compute buffer
-// 하나의 particle 의 정보
+//compute buffer 로 넘겨받는 정보와 compute buffer
+//하나의 particle 의 정보
 struct Particle
 {
     float3 position;
@@ -32,82 +25,67 @@ struct Particle
     float3 surfNormal;
 };
 
-
-// 넘겨 받는 Particle Compute Buffer
+//넘겨 받는 Particle Compute Buffer
+//읽고 쓰는 버퍼이기 때문에 RW + 서로 다른 커널 함수가 공유한다 shared
 shared RWStructuredBuffer<Particle> particles;
 
 
 //----------------------------------------------------------------
 
 
-// 연산에 필요한 여러 값들
-// particle 에 대한 정보
+//스크립트로 부터 넘겨받는, 연산에 필요한 여러 값들
+//particle 에 대한 정보
     float particleMass;
     int particleCount;
 
-
-// Smooth Kernel 들에 대한 정보
+//Smooth Kernel 들에 대한 정보
     float h;
     float hSquare;
 
-
-// 압력 계산에 필요한 정보
+//압력 계산에 필요한 정보
     float gasCoeffi;
     float restDensity;
 
-
-// 점성에 의한 힘 계산 정보
+//점성에 의한 힘 계산 정보
     float viscosity;
 
-
-// 외력에 의한 힘 계산 정보
+//외력에 의한 힘 계산 정보
     float3 gravityAcel;
 
-
-// 이동 계산 정보
+//이동 계산 정보
     float deltaTime;
     float Time;
 
-
-// 범위 계산 정보
+//범위 계산 정보
     float damping;
     float3 limitRange;
 
-
-// 외력
+//외력
     float extraForce;
 
-
-// Surface
+//Surface
     float surfCoeffi;
     float surfForceThreshold;
 
-    
+// mouse click 을 통해 입력받는 값
+    float yDiff;
+    float2 inputForce;
+
+
 //----------------------------------------------------------------
+
+
 // 계산에 사용하는 상수
 #define PI 3.1415926536
+
 // 한 스레드 그룹의 수
 #define ThreadCount 128
 
 
-
-//----------------------------------------------------------------
-// mouse click 을 통해 입력받는 값
-//float2 yRange;
-    float yDiff;
-float2 inputForce;
-
-
-
-
 //----------------------------------------------------------------
 
 
-
-
-// smooth kernel 함수를 계산하는 함수로 만들자
-
-
+//smooth kernel 함수들 => 헷갈리니까 함수식을 미리 만들어 놓자
 /* 
     W_poly6 -> 변수인 r 의 제곱을 사용한다
     사용처
@@ -118,9 +96,6 @@ float W_Poly6(float r2)
 {
     return (315.0f / (64 * PI * pow(abs(h), 9.0f) ) ) * pow(abs(hSquare - r2), 3);
 }
-
-
-
 /* 
     Grad_W_Poly6 -> r 제곱을 변수로 사용
                  -> gradient 결과 상대 particle 을 가리키는 벡터를 가진다
@@ -132,9 +107,6 @@ float Grad_W_Poly6(float r2)
 {
     return (315.0f * (-6.0f) / (64.0f * PI * pow(abs(h), 9))) * pow(abs(hSquare - r2), 2);
 }
-
-
-
 /* 
     Laplace_W_Poly6 -> r 제곱을 사용
     사용처
@@ -144,7 +116,6 @@ float Laplace_W_Poly6(float r2)
 {
     return (315.0f / (64 * PI * pow(abs(h), 9))) * ((-18) * pow(abs(hSquare - r2), 2) + 24 * r2 * (hSquare - r2));
 }
-
 
 
 /* 
@@ -160,7 +131,6 @@ float Grad_W_Spiky(float r)
 }
 
 
-
 /* 
     Laplace_W_Viscosity -> r 사용
     사용처
@@ -172,30 +142,26 @@ float Laplace_W_Viscosity(float r)
 }
 
 
-
-
 //----------------------------------------------------------------
 
 
-
-
-
-
 /* 
-    2-1. particle 의 상태 갱신
+    2-1. particle 의 상태 갱신하는 커널 함수
+
     가장 먼저 밀도를 계산하고
     얻은 밀도 값으로 압력 값을 계산한다
 */
 [numthreads(ThreadCount, 1, 1)]
-void ComputeDensityPressure (uint3 id : SV_DispatchThreadID)
+void ComputeDensityPressure (uint3 id : SV_DispatchThreadID) //SV_DispatchThreadID => 전체 그룹 관점에서, 해당 스레드 id 리턴
 {
-
-    // 일단 스레드가 담당하는 현재 particle 을 가져온다
+    //일단 스레드가 담당하는 현재 particle 을 가져온다
     Particle curParticle = particles[id.x];
 
-    // particle 의 밀도는 매 프레임마다 구해주어야 한다
-    curParticle.density = 0;
+    //particle 의 밀도는 매 프레임마다 구해주어야 한다
+    curParticle.density = 0; //초기화
 
+
+    //밀도 -> 압력 순서로 계산
 
 
     /* 
@@ -204,28 +170,26 @@ void ComputeDensityPressure (uint3 id : SV_DispatchThreadID)
     */
     for(int j = 0; j < particleCount; j++)
     {
-
-        // 자신과 다른 particle 간의 위치 차이를 구한다
-        // 논문에서 주어진 대로, 상대방에서 나를 향하는 벡터를 사용한다
+        //자신과 다른 particle 간의 위치 차이를 구한다
+        //논문에서 주어진 대로, 상대방에서 나를 향하는 벡터를 사용한다
         float3 relativePos = curParticle.position - particles[j].position;
-
 
         float rSquare = dot(relativePos, relativePos);
 
-
-        // 서로 떨어져 있는 거리가 h 이하인 경우에만 영향을 끼친다
-        // 이때 어차피 r^2 을 사용하므로, 거리 비교도 제곱 값을 이용한다
-        // 제곱하고자 하는 값이 벡터니까... 거리를 구하고 제곱하는 거 보다, 자체 내적을 이용하는 게 더 편하다 -> 그래서
+        //서로 떨어져 있는 거리가 h 이하인 경우에만 영향을 끼친다 => h = smooth radius
+        //이때 어차피 r^2 을 사용하므로, 거리 비교도 제곱 값을 이용한다
+        //제곱하고자 하는 값이 벡터니까... 거리를 구하고 제곱하는 거 보다, 자체 내적을 이용하는 게 더 편하다 -> 그래서 내적 사용
         if(rSquare < hSquare)
         {
-            // SPH 방법을 이용하여 밀도를 구한다
+            //SPH 방법을 이용하여 밀도를 구한다
+            //W_Poly6 Smooth Kernel
             curParticle.density += particleMass * W_Poly6(rSquare);
         }
 
     }
     
 
-    // 혹시 모르니까, 밀도 값은 음수 값을 가질 수 없다
+    //혹시 모르니까, 밀도 값은 음수 값을 가질 수 없다
     curParticle.density = max(curParticle.density, 0.001f);
 
         
@@ -234,32 +198,37 @@ void ComputeDensityPressure (uint3 id : SV_DispatchThreadID)
     curParticle.pressure = gasCoeffi * max(curParticle.density - restDensity, 0.0f);
 
 
-    // 다른 모든 스레드들이 공유 메모리에 접근하는 것을 기다린다
-    // -------------동기화----------------
-    GroupMemoryBarrierWithGroupSync();
+    /*
+        다른 모든 스레드들이 공유 메모리에 접근하는 것을 기다리게 하면서, 동기화를 하고 싶었지만?
+        하나의 그룹 내의 스레드들만 동기화가 된다
+        즉, 어차피 전체 그룹 내 전체 스레드의 동기화는 불가능
+        그냥 하지말자
+
+        GroupMemoryBarrierWithGroupSync();
+    */
+    
 
 
     // 계산한 particle 정보를 버퍼에 저장한다
     particles[id.x] = curParticle;
-
 }
-
-
 
 
 
 
 /* 
     2-2. particle 에 가해지는 힘을 구한다
+
     내 생각에 각 성분 별로 힘을 나누어서 구하면 편하다고 생각이 들지만
     그러면 전체 particle 에 대해서 한번 씩 순회를 해야 한다
     한번 훑을 때 한꺼번에 처리하는 것이 효율적이다
 
     압력에 의한 힘 => 반발력
     점성에 의한 힘 => 상대를 따라가는, 인력
-    입자의 surface normal
     파동을 일으키는 힘
     중력
+
+    그리고 각 입자의 surface normal vector 도 계산하자 => shader 에서 lighting 에 사용할 예정
 */
 [numthreads(ThreadCount, 1, 1)]
 void ComputeForces (uint3 id : SV_DispatchThreadID)
@@ -277,17 +246,14 @@ void ComputeForces (uint3 id : SV_DispatchThreadID)
     float3 viscosityForce = 0;
 
 
-    // 세번째, currnet particle 의 surface normal
+    // 세번째, currnet particle 의 surface normal vector
     curParticle.surfNormal = 0;
 
     
 
-
-
     // 전체 particles 에 대해서
     for(int j = 0; j < particleCount; j++)
     {
-
         /* 
             자기 자신에 대해서 계산을 하는 경우,
             r_i - r_j = 0 벡터가 나온다
@@ -298,17 +264,16 @@ void ComputeForces (uint3 id : SV_DispatchThreadID)
         
             surface normal 의 경우에도, 0 벡터로 방향이 없으므로 작업하지 않는다
         */
-        if((uint)j == id.x) continue;
+        if((uint)j == id.x) continue; //자기 자신에 대해서는 그냥 작업을 건너뛴다
 
 
-
-        // 조사하고자 하는 particle
+        //조사하고자 하는 particle
         Particle jthParticle = particles[j];
 
 
-        // 논문에서 제시 하듯이, 자신위치 - 상대위치, 벡터를 사용한다
+        //논문에서 제시 하듯이, 자신위치 - 상대위치, 벡터를 사용한다
+        //상대가 -> 나를 바라보는 방향의 벡터
         float3 relativePos = curParticle.position - jthParticle.position;
-
 
         float rSquare = dot(relativePos, relativePos);
 
@@ -316,127 +281,104 @@ void ComputeForces (uint3 id : SV_DispatchThreadID)
         // 다른 particle 이 영향 범위 내에 존재한다면
         if(rSquare < hSquare)
         {
-
             float r = length(relativePos);
             float3 rPN = normalize(relativePos);
 
 
-            // 먼저 압력에 의한 힘 계산
-            // -rPN 이 아니고 +rPN 아님? => 어차피 particle -> 다른 particle 로 미는 방향 아닌가?
-            // 아 그런데 이 particle 이 압력에 의해 서로 밀쳐내는,
-            // repulsion force 를 생성하니까, -rPN 인가보다
-            // 내가 받는 힘의 방향이, 상대방으로부터 멀어지는 방향이여야 하니까 -rPN 이다?
-            // pressureForce += -rPN * particleMass * (particle.pressure + otherParticle.pressure) / (2 * otherParticle.density) * Grad_W_Spiky(r);
+            /*
+                먼저 압력에 의한 힘 계산
+
+                압력에 의한 힘 => 서로를 밀어내는 힘
+                따라서 상대에 의해서, 상대로부터 멀어져야 한다
+
+                그래서, -rPN 이 아니고 +rPN 을 적용해야 하는 거 아닌가 생각했는데
+                실행해본 결과, 논문에서 제시하는 수식대로 -1 을 곱해야만 서로 밀어내는 힘으로 작용한다는 것을 알 수 있었다
             
-            // +1 => 안정된다, 서로 당긴다
-            // -1 => 서로 엄청 밀어낸다 => 이게 압력이지
-            // 그럼, 벡터부터 수식 전부다 논문대로 하면? 맞다는 결론 아닌가??
+                그래서 논문에서 제시한 식대로 적용
+            */
             pressureForce += (-1) * particleMass * (curParticle.pressure + jthParticle.pressure) / (2 * jthParticle.density) * Grad_W_Spiky(r) * rPN;
 
 
-
-            // 두번째로 점성에 의한 힘 계산
-            // viscosityForce += viscosity * particleMass * ((otherParticle.velocity - particle.velocity) / otherParticle.density) * Laplace_W_Viscosity(r);
-
-
-            // 점성에 의한 힘은, 현재 입자에서 상대 입자의 속도 방향과 같은 방향을 가진다
-            // 내가 너를 따라가는 방향
+            /*
+                두번째는 점성에 의한 힘 계산
+                
+                점성에 의한 힘은, 서로를 당기는 힘
+                내 particle 이 상대 particle 방향으로 이동해야 한다
+                현재 입자에서 상대 입자의 속도 방향과 같은 방향을 가진다
+             */            
             viscosityForce += viscosity * particleMass * (jthParticle.velocity - curParticle.velocity) / jthParticle.density * Laplace_W_Viscosity(r);
 
 
-
-            // surface normal 을 구해보자
-            // fluid 를 향하는 surface normal, particle 이 다른 particle 로 향하는, 끌리는 방향을 가져야 한다
-            // particle.surfNormal += particleMass / otherParticle.density * Grad_W_Poly6(rSquare) * relativePos;
-
-            // 논문에서 준 대로, 현재위치 - 상대위치, 를 나타내는 벡터의 방향을 사용한다
+            /*
+                세번째는 Particle 의 surface normal vector
+            
+                바깥이 아닌, fluid 를 향하는 surface normal 이다
+                particle 이 다른 particle 로 향하는, 끌리는 방향을 가져야 한다
+                
+                논문에서 준 대로, 현재위치 - 상대위치, 를 나타내는 벡터의 방향을 사용한다
+            */
             curParticle.surfNormal += particleMass / jthParticle.density * Grad_W_Poly6(rSquare) * relativePos;
-
-    
         }
     }
 
 
-
-    // 네번째, Wave Force
+    // 네번째, Wave Force, 파도처럼 움직이는 파동형 힘
+                                        //삼각함수 형태로 힘이 적용, x 축을 따라서 다른 힘이 적용된다
     float3 waveF = extraForce * float3(0, sin(curParticle.position.x/limitRange.x * PI + Time), 0);
-
-    
-    // particle 의 높이 값에 맞춰서 적용되는 파동 힘을 조절한다
-    // 깊이 있을수록 더 큰 힘을 받는다
+        
+    //particle 의 높이 값에 맞춰서 적용되는 파동 힘을 조절한다
+    //얕은 곳에 있을 수록 힘을 덜 받으며
+    //깊이 있을수록 더 큰 힘을 받는다
     float yRatio = max( -curParticle.position.y / limitRange.y, 0.0f) ;
-    
-    
     waveF *= yRatio;
-
-
-
-
-
-
 
 
     // 다섯번째, 중력에 의한 힘을 계산한다
     // 나비에 스톡스 방정식에 의해 ~ 밀도 사용 // 나도 2000 정도 곱해줘야 하나??
     float3 gravityForce = gravityAcel * curParticle.density;
-    // float3 gravityForce = gravityAcel * 0.1f;;
 
 
-
-       
-    // 구한 힘들을 모두 더해준다
+    //구한 힘들을 모두 더해준다, 알짜 힘 구하기
     curParticle.force = pressureForce + viscosityForce + gravityForce + waveF;
 
-
-
-
-
     
+
     // -------------동기화----------------
-    GroupMemoryBarrierWithGroupSync();
-
+    //GroupMemoryBarrierWithGroupSync();
     particles[id.x] = curParticle;
-
 }
 
 
 
 
-
-
 /*
-    2-2-1 ComputeSurface
-    Surface force 를 구하는 과정
+    2-2-1 ComputeSurface, Surface force 를 구하는 과정
+
     입자 하나의 Surface Normal 이 필요하기 때문에, 커널을 따로 사용했다
 */
 [numthreads(ThreadCount, 1, 1)]
 void ComputeSurfaceForce (uint3 id : SV_DispatchThreadID)
 {
-
     // 스레드에 해당하는 particle 을 가져온다
     Particle curParticle = particles[id.x];
 
 
-    // 처리하려는 paticle 의 surface normal 크기가 threshold 이상일 때만 밑의 과정을 진행한다
-    // threshold 보다 surfNormal 의 크기가 작다 => 표면에서 많이 멀다
+    //처리하려는 paticle 의 surface normal 크기가 threshold 이상일 때만 밑의 과정을 진행한다
+    //threshold 보다 surfNormal 의 크기가 작다 => 표면에서 많이 멀다 => 표면 장력을 계산할 필요가 없다
     if( length(curParticle.surfNormal) < surfForceThreshold ) return;
 
 
-
-    // surface force
     // surface force 에서 라플라시안 부분 => 크기만 따로 계산하자
     float3 surfForceMag = 0;
-
 
 
     // 전체 particles 에 대해서 조사를 한다
     for(int j = 0; j < particleCount; j++)
     {
-
         // surface force 를 구하는 과정
-        // 방향은 surface normal 로 결정되어 있고 스칼라 값을 구하는 과정이니까 자기자신을 포함해도 상관 없을 듯?
-        
-    
+        // 방향은 surface normal 로 결정되어 있고 == fluid 를 수직으로 향하는 방향
+        //스칼라 값을 구하는 과정이니까 자기자신을 포함해도 상관 없을 듯?
+       
         
         // 조사하려는 particle
         Particle jthParticle = particles[j];
@@ -444,7 +386,6 @@ void ComputeSurfaceForce (uint3 id : SV_DispatchThreadID)
         
         // 논문에서 사용한 것처럼, 현재 위치 - 상대 위치, 벡터 값을 사용
         float3 relativePos = curParticle.position - jthParticle.position;
-
         float rSquare = dot(relativePos, relativePos);
 
 
@@ -453,29 +394,37 @@ void ComputeSurfaceForce (uint3 id : SV_DispatchThreadID)
         {
             surfForceMag += particleMass / jthParticle.density * Laplace_W_Poly6(rSquare);
         }
-
     }
-
 
 
     // 표면장력을 논문의 식으로 구해, 입자의 힘에 추가로 넣어준다
     curParticle.force += (-1) * surfCoeffi * surfForceMag * normalize(curParticle.surfNormal);
 
-    
-
 
     // -------------동기화----------------
-    GroupMemoryBarrierWithGroupSync();
-    
+    //GroupMemoryBarrierWithGroupSync();
     particles[id.x] = curParticle;
-
  }
 
 
 
 
+/*
+    2-2-2. 마우스 입력을 통한 외력을 계산하는 커널 함수
+*/
+[numthreads(ThreadCount, 1, 1)]
+void ComputeInputForce(uint3 id : SV_DispatchThreadID)
+{
 
+    Particle curParticle = particles[id.x];
 
+    //모든 Particles 에 대해서 같은 힘을 가한다
+    //스크린 공간 상의 마우스 입력은, 월드 공간에서 xz 평면 힘으로 작용
+    //스크린 공간의 y축 변화량은, 월드 공간에서 y 축 성분 힘으로 작용
+    curParticle.force += float3(inputForce.x, yDiff, inputForce.y);
+
+    particles[id.x] = curParticle;
+}
 
 
 
@@ -485,36 +434,15 @@ void ComputeSurfaceForce (uint3 id : SV_DispatchThreadID)
 void MakeMove (uint3 id : SV_DispatchThreadID)
 {
     Particle particle = particles[id.x];
-    //float3 extraF = extraForce * float3(0, sin(id.x + Time), 0);
-
     
-    // 나비에 스톡스 방정식에 의해서 ~ 밀도를 사용해야 한다
+
+    //나비에 스톡스 방정식에 의해서 ~ 밀도를 사용해야 한다
+    //알짜힘 => 가속도 => 속도 구함
     particle.velocity += deltaTime * particle.force / particle.density;
 
-    // particle.velocity += extraF;
-
-    //particle.velocity += deltaTime * particle.force / 0.1f;
-
-    //particle.velocity += deltaTime * (particle.force / particleMass);
-
-    // particle.velocity += float3(1.0f, 1.0f, 1.0f) * deltaTime;
-    //particle.velocity += deltaTime * particle.force * 0.01f;
-
-
-
-
-
-    /* float3 extraF = extraForce * float3(0, sin( (id.x - 0.5 * particleCount) * 2 * PI / particleCount + Time), 0);
-    particle.position = extraF; */
 
     // 변한 속도 만큼 이동
     particle.position += (deltaTime * particle.velocity);
-
-
-/* 
-    particle.velocity = float3(0, 0, 0);
-    particle.position += float3(0, sin( (id.x / particleCount) * PI + Time), 0); */
-
 
     particles[id.x] = particle;
 }
@@ -522,16 +450,12 @@ void MakeMove (uint3 id : SV_DispatchThreadID)
 
 
 
-
-
 // 2-4. Particle 이 정해진 영역을 벗어나는 지 확인
 [numthreads(ThreadCount, 1, 1)]
 void CheckLimit (uint3 id : SV_DispatchThreadID)
-{
-    
+{    
     // 동작을 확인하고자 하는 particle
     Particle particle = particles[id.x];
-
 
     // 각 경계면에서 내부를 향하는, 노멀벡터를 설정한다
     float3 norVec = float3(0, 0, 0);
@@ -541,25 +465,23 @@ void CheckLimit (uint3 id : SV_DispatchThreadID)
 
     
 
-    // 벗어난 경계면의 종류에 따라 내부로 향해야 하는, 노멀 벡터를 구해준다
+    //벗어난 경계면의 종류에 따라 내부로 향해야 하는, 노멀 벡터를 구해준다
     if(particle.position.x < -limitRange.x)      norVec.x += -limitRange.x - particle.position.x;
     else if(particle.position.x > limitRange.x)  norVec.x += limitRange.x - particle.position.x;
     
     if(particle.position.y < -limitRange.y)               norVec.y += -limitRange.y - particle.position.y;
-    //else if(particle.position.y > limitRange.y + height)  norVec.y += (limitRange.y + height) - particle.position.y;
     else if(particle.position.y > limitRange.y)  norVec.y += (limitRange.y) - particle.position.y;
 
     if(particle.position.z < -limitRange.z)      norVec.z += -limitRange.z - particle.position.z;
     else if(particle.position.z > limitRange.z)  norVec.z += limitRange.z - particle.position.z;
 
 
-
     
-    // 정해진 영역으로 들어가는 노멀벡터가 0벡터 이라면, 범위를 벗어나지 않은 거니까, 그냥 끝낸다
+    //정해진 영역으로 들어가는 노멀벡터가 0벡터 이라면, 범위를 벗어나지 않은 거니까, 그냥 끝낸다
     if(dot(norVec, norVec) == 0) return;
+
     // 아니라면, 경계로부터 떨어진 거리를 구하고 노멀벡터를 정규화한다
-    else
-    {
+    else {
         // norVec 의 길이가 경계로부터 떨어진 거리다
         overLength = length(norVec);
         
@@ -568,114 +490,23 @@ void CheckLimit (uint3 id : SV_DispatchThreadID)
     }
 
 
+    /*
+        정해진 영역을 벗어났으니, 들어오는 방향으로 particle 의 속도를 바꾸어야 한다
 
-    // 아니라면, 현재 속도와 노멀벡터를 내적한다. 그러면? 자동으로 속도에서 노멀벡터와 평행한 성분만 나오면서, 음수 결과가 나오잖아
-    // 여기서 내적의 결과가 음수라는 건, 그냥 법선 벡터와 속도 벡터가 반대방향이라는 걸 나타낼 뿐이고
-    // 진짜 필요한 값은 내적의 절대값 => 이거에 마이너스를 붙여서, 두 배를 한다음에 원래 속도에 더하자
-    // 그러면 원래 속도에서 법선벡터에 평행한 성분만 반대방향으로 바뀐다
-    // 두배를 하지말고, 1+damping 배 하면 될듯?
-    //particle.velocity += abs( dot(norVec, particle.velocity) ) * norVec; // 이러면 원래 속도에서 들어가는 성분이 사라지게 되고
-
-    // 좀 더 사라지게 하고 싶으면?
-    // 경계면을 향하도록 속도를 조정
-    particle.velocity += abs( dot(norVec, particle.velocity) ) * norVec * (1 + damping);
-
+        영역으로 들어오는 - 노멀 벡터를 속도로 가지도록 한다
+        그리고 경계와 부딪혔으니, damping 값 만큼 속도가 느려지게 한다
+    */
+    particle.velocity = norVec * (1 - damping);
     
-    // 바뀐 속도 방향으로, 위치를 조금 이동시킨다
-    //particle.position += particle.velocity * 0.001f;
-
-    // 영역을 벗어난만큼, 이동을 시켜주어야 할 것 같다
-    // 영역 안을 향하는 방향으로
-    // 근데 조금만 더 넣어주자
+    
+    /*
+        그리로 영역을 벗어난만큼, particle 을 직접 이동 시킽다
+        원하는 영역 안으로 직접 이동시킨다
+    */    
     particle.position += overLength * (1.0001f) * norVec;
     
 
 
     // 수정한 내용을 버퍼에 저장한다
     particles[id.x] = particle;
-
-    //float3 tempVel = particle.velocity;
-    /* 
-
-    if(particle.position.x < -limitRange.x || particle.position.x > limitRange.x)
-        tempVel.x = -particle.velocity.x;
-    if(particle.position.y < -limitRange.y || particle.position.y > limitRange.y)
-        tempVel.y = -particle.velocity.y;
-    if(particle.position.z < -limitRange.z || particle.position.z > limitRange.z)
-        tempVel.z = -particle.velocity.z;
-
-
-    if(tempVel.x != particle.velocity.x || tempVel.y != particle.velocity.y 
-       || tempVel.z != particle.velocity.z)
-    {
-        particle.velocity = tempVel;
-        particle.position = particle.position + tempVel*deltaTime*2;
-
-        particles[id.x] = particle;
-        return;
-    }
-    else return; */
-
-
-    /* if(particle.position.x < -limitRange.x || particle.position.x > limitRange.x ||
-       particle.position.y < -limitRange.y || particle.position.y > limitRange.y ||
-       particle.position.z < -limitRange.z || particle.position.z > limitRange.z)
-    {
-        particle.position = float3(id.x * 2, 0 ,0);
-        particle.velocity = float3(0,0,0);
-    }   
-
-    particles[id.x] = particle; */
-
-
-
-
-}
-
-
-
-//
-//
-//[numthreads(ThreadCount, 1, 1)]
-//void GiveForce (uint3 id : SV_DispatchThreadID)
-//{
-//
-//    Particle particle = particles[id.x];
-//
-//    if(particle.position.x <= 0)
-//    {
-//        particle.force += float3(500, 500, 0);
-//
-//        particles[id.x] = particle;
-//    }
-//    else return;
-//}
-
-
-
-
-[numthreads(ThreadCount, 1, 1)]
-void ComputeInputForce (uint3 id : SV_DispatchThreadID)
-{
-    
-    Particle curParticle = particles[id.x];
-    
-    // 현재 파티클이 힘을 받을 범위에 있는 파티클인지를 확인해야 한다
-    
-    // 파티클 영역의 y 높이
-    // float yHeight = limitRange.y * 2;
-
-    // 해당 파티클의 높이가, 적용하려는 힘의 범위를 벗어난다면, 끝낸다
-/*     if((curParticle.position.y + limitRange.y) < yHeight * yRange.x ||
-        (curParticle.position.y + limitRange.y) > yHeight * yRange.y) return; */
-
-    
-    // 해당 범위에 속한다면 파티클에 입력받은 방향으로 힘을 준다
-    // 스크린 공간에서 x => 월드 공간에서 x
-    // 스크린 공간에서 y => 월드 공간에서 z
-    // 월드 공간에서 y 는 일단 고정값
-    curParticle.force += float3(inputForce.x, 0, inputForce.y);
-
-
-    particles[id.x] = curParticle;
 }

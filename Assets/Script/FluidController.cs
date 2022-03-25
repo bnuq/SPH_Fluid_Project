@@ -196,7 +196,7 @@ public class FluidController : MonoBehaviour
 
         int kernelComputeDensityPressure;   //힘을 계산하기 전, 각 Particles 의 밀도와 압력 값을 계산
 
-        int kernelComputeForces;            //유체를 움직이는 힘 3가지를 계산
+        int kernelComputeForces;            //압력에 의한 힘 + 점성에 의한 힘 + Wave 에 의한 힘 계산 + 중력
         int kernelComputeSurfaceForce;      //표면장력을 계산한다
         int kernelComputeInputForce;        //외부의 힘을 계산한다, 마우스 클릭을 통해서 힘을 가할 수 있다
 
@@ -266,7 +266,7 @@ public class FluidController : MonoBehaviour
         // 2-1. 각 particle 들의 밀도와 압력을 먼저 계산하고
         shader.Dispatch(kernelComputeDensityPressure, groupSize, 1, 1);
 
-        // 2-2. 각 particle 에 가해지는 힘을 계산한다
+        // 2-2. 각 particle 에 가해지는 압력에 의한 힘 + 점성에 의한 힘 + Wave 에 의한 힘 계산 + 중력
         shader.Dispatch(kernelComputeForces, groupSize, 1, 1);
 
         // 2-2-5. surface force 를 구하는 커널
@@ -342,7 +342,7 @@ public class FluidController : MonoBehaviour
         //Particle 의 밀도, 압력 값을 계산하는 커널
         kernelComputeDensityPressure = shader.FindKernel("ComputeDensityPressure");
 
-        //기본 3 가지 종류의 힘의 합을 구하는 커널
+        //압력에 의한 힘 + 점성에 의한 힘 + Wave 에 의한 힘 + 중력 을 계산하는 커널
         kernelComputeForces = shader.FindKernel("ComputeForces");
 
         //표면 장력을 계산하는 커널
