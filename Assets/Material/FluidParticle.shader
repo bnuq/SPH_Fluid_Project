@@ -8,14 +8,17 @@ Shader "Fluid/FluidParticle"
         //간접광을 얼마나 받을 지, ambient
         _Ambient ("Ambient", Range(0, 1)) = 0.25
 
-        // diffuse 에 의한 알파를 조절
-        _diffuseAlpha ( "Diffuse Alpha", Range(0,2)) = 1
+        //Diffuse 에 의한 색깔에서, 알파를 조절
+        _diffuseAlpha ( "Diffuse Alpha", Range(0, 5)) = 1
         
-        // 반사광 계산에 필요
-        // 반사 광 색깔만 나타낼 것이기에, 물체는 무채색만 가진다
+        //반사광 색, 무채색을 가진다
         _SpecColor ( "Specular Material Color", Color) = (1, 1, 1, 1) 
 
-        _Shininess ( "Shininess", Range(0, 10)) = 10 // 스펙큘러 강도
+        //스펙큘러 강도
+        _Shininess ( "Shininess", Range(0, 10)) = 10
+
+        //반사광을 적용하는 정도
+        _specCoef("Specular Coefficient", Range(0, 1)) = 0.5
 
     }
 
@@ -28,11 +31,9 @@ Shader "Fluid/FluidParticle"
         Pass
         {
             CGPROGRAM
-
                 #pragma vertex vert
                 #pragma fragment frag
 
-                
                 // 기본 헤더파일
                 #include "UnityCG.cginc"
                 
@@ -42,10 +43,12 @@ Shader "Fluid/FluidParticle"
 
                 // Properties
                     fixed4 _Color;
+
                     float _Ambient;
                     float _diffuseAlpha;
-                    float _Shininess;
 
+                    float _Shininess;
+                    float _specCoef;
 
                 struct appdata
                 {
@@ -138,7 +141,7 @@ Shader "Fluid/FluidParticle"
                     
                     o.surfaceNormalWorld = normalWorld;
                     o.surfaceNormalLength = length(normalWorld);
-
+                    
                     return o;
                 }
 
@@ -147,7 +150,7 @@ Shader "Fluid/FluidParticle"
                 fixed4 frag (v2f i) : SV_Target
                 {
                     // 그냥 표면 파티클이 아니면 그리지 않는다
-                    if(i.surfaceNormalLength < surfTrackThreshold) return fixed4(0, 0, 0, 0);
+                    if(i.surfaceNormalLength < surfTrackThreshold) return fixed4(1, 0, 0, 0);
 
 
                     //프레그먼트의 월드 공간 좌표계에서 surface normal 을 구한다
@@ -168,15 +171,20 @@ Shader "Fluid/FluidParticle"
                         1. 일단 기본적인 난반사, Lambert Lighting
 
                         들어오는 빛의 양을 계산해서 그 만큼 자체 색을 가진다
+                        최소 _Ambient 만큼은 빛이 들어온다고 생각하자
                     */
-                    float lightAmount = max(0, dot(norVec, lightVec));
+                    float lightAmount = max(_Ambient, dot(norVec, lightVec));
                     float4 diffuseTerm = (lightAmount * _Color * _LightColor0);
 
-                    diffuseTerm.w = 0.5f;
-                    //diffuseTerm.w = max(0.1f, _diffuseAlpha - diffuseTerm.w);
 
-
+                    //표면의 정도를 나타내는 변수를 만들자
+                    //이 값이 0 에 가까울수록 내부이며, 클수록 표면이다
+                    float surfCoef = i.surfaceNormalLength - surfTrackThreshold;
                     
+                    //표면일수록 불투명한 값을 가지게 하자
+                    diffuseTerm.w = surfCoef * _diffuseAlpha;
+
+                                        
                     /*
                         2. 정반사, 스펙큘러
 
@@ -193,17 +201,17 @@ Shader "Fluid/FluidParticle"
 
                     // 정반사 빛
                     float4 specularTerm = specular * _SpecColor * _LightColor0;
-                    
-                    // 정반사는 금속 느낌이 나니까, 알파 값을 없애자
-                    specularTerm.w = 0.5f;
-                        
-                        
+                                            
+                    //정반사 색깔이 어느정도 영향을 미치는 지 모르므로, 일정 계수를 곱해서 적용한다
+                    specularTerm = specularTerm * _specCoef;
+
+                    //정반사 정도가 투명도에 영향을 끼치지 않게 한다
+                    specularTerm.w = 0;
+
 
                     float4 finalColor = diffuseTerm + specularTerm;
-
-
+                    
                     return finalColor;
-            
                 }
             ENDCG
         }
