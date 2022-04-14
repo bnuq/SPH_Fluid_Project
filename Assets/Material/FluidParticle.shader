@@ -150,7 +150,7 @@ Shader "Fluid/FluidParticle"
                 fixed4 frag (v2f i) : SV_Target
                 {
                     // 그냥 표면 파티클이 아니면 그리지 않는다
-                    if(i.surfaceNormalLength < surfTrackThreshold) return fixed4(1, 0, 0, 0);
+                    if(i.surfaceNormalLength < surfTrackThreshold) return fixed4(0, 0, 0, 0);
 
 
                     //프레그먼트의 월드 공간 좌표계에서 surface normal 을 구한다
