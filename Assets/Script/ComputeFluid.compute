@@ -152,7 +152,8 @@ float Laplace_W_Viscosity(float r)
     얻은 밀도 값으로 압력 값을 계산한다
 */
 [numthreads(ThreadCount, 1, 1)]
-void ComputeDensityPressure (uint3 id : SV_DispatchThreadID) //SV_DispatchThreadID => 전체 그룹 관점에서, 해당 스레드 id 리턴
+//SV_DispatchThreadID => 전체 그룹 관점에서, 해당 스레드 id 리턴
+void ComputeDensityPressure (uint3 id : SV_DispatchThreadID) 
 {
     //일단 스레드가 담당하는 현재 particle 을 가져온다
     Particle curParticle = particles[id.x];
@@ -162,8 +163,6 @@ void ComputeDensityPressure (uint3 id : SV_DispatchThreadID) //SV_DispatchThread
 
 
     //밀도 -> 압력 순서로 계산
-
-
     /* 
         SPH 기법 = 전체 다른 particle 의 값과 위치를 이용해서 보간해서 => 현재 값을 구한다
         그러니까, 전체 particles 에 대해서 조사를 진행한다
@@ -178,7 +177,8 @@ void ComputeDensityPressure (uint3 id : SV_DispatchThreadID) //SV_DispatchThread
 
         //서로 떨어져 있는 거리가 h 이하인 경우에만 영향을 끼친다 => h = smooth radius
         //이때 어차피 r^2 을 사용하므로, 거리 비교도 제곱 값을 이용한다
-        //제곱하고자 하는 값이 벡터니까... 거리를 구하고 제곱하는 거 보다, 자체 내적을 이용하는 게 더 편하다 -> 그래서 내적 사용
+        //제곱하고자 하는 값이 벡터니까... 거리를 구하고 제곱하는 거 보다,
+        //자체 내적을 이용하는 게 더 편하다 -> 그래서 내적 사용
         if(rSquare < hSquare)
         {
             //SPH 방법을 이용하여 밀도를 구한다
@@ -187,8 +187,6 @@ void ComputeDensityPressure (uint3 id : SV_DispatchThreadID) //SV_DispatchThread
         }
 
     }
-    
-
     //혹시 모르니까, 밀도 값은 음수 값을 가질 수 없다
     curParticle.density = max(curParticle.density, 0.001f);
 
@@ -196,7 +194,6 @@ void ComputeDensityPressure (uint3 id : SV_DispatchThreadID) //SV_DispatchThread
     // 새로 구한 밀도를 바탕으로, particle 이 가지는 압력을 구한다
     // 논문에 의해서, 수정된 이상기체 방정식을 사용하도록 한다
     curParticle.pressure = gasCoeffi * max(curParticle.density - restDensity, 0.0f);
-
 
     /*
         다른 모든 스레드들이 공유 메모리에 접근하는 것을 기다리게 하면서, 동기화를 하고 싶었지만?
@@ -207,8 +204,6 @@ void ComputeDensityPressure (uint3 id : SV_DispatchThreadID) //SV_DispatchThread
         GroupMemoryBarrierWithGroupSync();
     */
     
-
-
     // 계산한 particle 정보를 버퍼에 저장한다
     particles[id.x] = curParticle;
 }
@@ -469,7 +464,7 @@ void CheckLimit (uint3 id : SV_DispatchThreadID)
     if(particle.position.x < -limitRange.x)      norVec.x += -limitRange.x - particle.position.x;
     else if(particle.position.x > limitRange.x)  norVec.x += limitRange.x - particle.position.x;
     
-    if(particle.position.y < -limitRange.y)               norVec.y += -limitRange.y - particle.position.y;
+    if(particle.position.y < -limitRange.y)      norVec.y += -limitRange.y - particle.position.y;
     else if(particle.position.y > limitRange.y)  norVec.y += (limitRange.y) - particle.position.y;
 
     if(particle.position.z < -limitRange.z)      norVec.z += -limitRange.z - particle.position.z;

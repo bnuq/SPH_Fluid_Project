@@ -60,11 +60,13 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _AlphaValue: 0.395
+    - _AlphaValue: 0.614
     - _Ambient: 0.456
+    - _AmbientDegree: 0.519
     - _BumpScale: 1
     - _Cutoff: 0.5
     - _DetailNormalMapScale: 1
+    - _DiffuseDegree: 0.489
     - _DstBlend: 0
     - _FloorAlpha: 1.14
     - _GlossMapScale: 1
@@ -77,8 +79,9 @@ Material:
     - _Mode: 0
     - _OcclusionStrength: 1
     - _Parallax: 0.02
-    - _Shininess: 1.38
+    - _Shininess: 5.69
     - _SmoothnessTextureChannel: 0
+    - _SpecularDegree: 0.287
     - _SpecularHeight: 0.1
     - _SpecularHighlights: 1
     - _SrcBlend: 1
@@ -91,7 +94,10 @@ Material:
     - _diffuseAlpha: 1.25
     - _specCoef: 0.338
     m_Colors:
+    - _AmbientColor: {r: 0, g: 0.0068885875, b: 0.7924528, a: 1}
+    - _AmbientDefault: {r: 0, g: 0, b: 0.16037738, a: 1}
     - _Color: {r: 0, g: 0.27014303, b: 1, a: 0}
+    - _DiffuseColor: {r: 0, g: 0.66784525, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
-    - _SpecColor: {r: 0.754717, g: 0.754717, b: 0.754717, a: 0}
+    - _SpecColor: {r: 1, g: 1, b: 1, a: 0}
   m_BuildTextureStacks: []

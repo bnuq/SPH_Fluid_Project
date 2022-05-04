@@ -358,9 +358,9 @@ MonoBehaviour:
   gravityAcel: {x: 0, y: -10, z: 0}
   deltaTime: 0.008
   limitRange: {x: 12, y: 12, z: 5}
-  damping: 0.4
-  extraForce: 8.9
-  surfCoeffi: 12.5
+  damping: 0.5
+  extraForce: 0
+  surfCoeffi: 4
   surfForceThreshold: 0.049
   surfTrackThreshold: 0.054
   power: 3.8
